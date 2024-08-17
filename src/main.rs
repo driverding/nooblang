@@ -1,7 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, rc::{Rc, Weak}};
-
-// Ideas: Function Composition?
-
+use std::{cell::RefCell, collections::HashMap, fs, rc::{Rc, Weak}, env};
 
 // Token
 
@@ -217,15 +214,11 @@ enum Object {
 type Registry = HashMap<String, Rc<Object>>;
 
 
-// Raw Pointer OR RefCell?
-// Expression Unknown yet.
-
 // Statement
 
 trait Statement {
     fn execute(&self, reg: &mut Registry) -> Option<Rc<RefCell<dyn Statement>>>;
     fn set_next(&mut self, target: Option<Rc<RefCell<dyn Statement>>>);
-    fn get_next(&self) -> Option<Rc<RefCell<dyn Statement>>>;
 }
 
 struct LetStatement {
@@ -243,16 +236,12 @@ impl Statement for LetStatement {
     fn set_next(&mut self, target: Option<Rc<RefCell<dyn Statement>>>) {
         self.next = target;
     }
-
-    fn get_next(&self) -> Option<Rc<RefCell<dyn Statement>>> {
-        self.next.clone()
-    }
 }
 
 
 struct GotoStatement {
     condition: Box<dyn Expression>,
-    jump: Option<Weak<RefCell<dyn Statement>>>,
+    jump: Option<Weak<RefCell<EntryStatement>>>,
     next: Option<Rc<RefCell<dyn Statement>>>,
 }
 
@@ -268,10 +257,6 @@ impl Statement for GotoStatement {
     fn set_next(&mut self, target: Option<Rc<RefCell<dyn Statement>>>) {
         self.next = target;
     }
-
-    fn get_next(&self) -> Option<Rc<RefCell<dyn Statement>>> {
-        self.next.clone()
-    }
 }
 
 struct EntryStatement {
@@ -279,16 +264,12 @@ struct EntryStatement {
 }
 
 impl Statement for EntryStatement {
-    fn execute(&self, reg: &mut Registry) -> Option<Rc<RefCell<dyn Statement>>> {
+    fn execute(&self, _reg: &mut Registry) -> Option<Rc<RefCell<dyn Statement>>> {
         return self.next.clone();
     }
 
     fn set_next(&mut self, target: Option<Rc<RefCell<dyn Statement>>>) {
         self.next = target;
-    }
-
-    fn get_next(&self) -> Option<Rc<RefCell<dyn Statement>>> {
-        self.next.clone()
     }
 }
 
@@ -314,7 +295,7 @@ struct LiteralExpression {
 }
 
 impl Expression for LiteralExpression {
-    fn evaluate(&self, reg: &Registry) -> Object {
+    fn evaluate(&self, _reg: &Registry) -> Object {
         return self.literal.clone();
     }
 }
@@ -333,22 +314,62 @@ impl Expression for NegateOperation {
     }
 }
 
-struct GreaterOperation {
+struct EqualOperation {
     left:  Box<dyn Expression>,
     right: Box<dyn Expression>,
 }
 
-impl Expression for GreaterOperation {
+impl Expression for EqualOperation {
     fn evaluate(&self, reg: &Registry) -> Object {
         let left_obj  = (*self.left).evaluate(reg);
         let right_obj = (*self.right).evaluate(reg);
 
         match (left_obj, right_obj) {
             (Object::Int(l), Object::Int(r)) 
-                => Object::Bool(l > r),
+                => Object::Bool(l == r),
             (Object::Fp(l), Object::Fp(r))
-                => Object::Bool(l > r),
-            _   => panic!("GreaterOperation: Invalid types!")
+                => Object::Bool(l == r),
+            _   => panic!("GreaterEqualOperation: Invalid types!")
+        }
+    }
+}
+
+struct GreaterEqualOperation {
+    left:  Box<dyn Expression>,
+    right: Box<dyn Expression>,
+}
+
+impl Expression for GreaterEqualOperation {
+    fn evaluate(&self, reg: &Registry) -> Object {
+        let left_obj  = (*self.left).evaluate(reg);
+        let right_obj = (*self.right).evaluate(reg);
+
+        match (left_obj, right_obj) {
+            (Object::Int(l), Object::Int(r)) 
+                => Object::Bool(l >= r),
+            (Object::Fp(l), Object::Fp(r))
+                => Object::Bool(l >= r),
+            _   => panic!("GreaterEqualOperation: Invalid types!")
+        }
+    }
+}
+
+struct LesserOperation {
+    left:  Box<dyn Expression>,
+    right: Box<dyn Expression>,
+}
+
+impl Expression for LesserOperation {
+    fn evaluate(&self, reg: &Registry) -> Object {
+        let left_obj  = (*self.left).evaluate(reg);
+        let right_obj = (*self.right).evaluate(reg);
+
+        match (left_obj, right_obj) {
+            (Object::Int(l), Object::Int(r)) 
+                => Object::Bool(l < r),
+            (Object::Fp(l), Object::Fp(r))
+                => Object::Bool(l < r),
+            _   => panic!("LesserOperation: Invalid types!")
         }
     }
 }
@@ -373,6 +394,46 @@ impl Expression for AddOperation {
     }
 }
 
+struct MulOperation {
+    left:  Box<dyn Expression>,
+    right: Box<dyn Expression>,
+}
+
+impl Expression for MulOperation {
+    fn evaluate(&self, reg: &Registry) -> Object {
+        let left_obj  = (*self.left).evaluate(reg);
+        let right_obj = (*self.right).evaluate(reg);
+
+        match (left_obj, right_obj) {
+            (Object::Int(l), Object::Int(r)) 
+                => Object::Int(l * r),
+            (Object::Fp(l), Object::Fp(r))
+                => Object::Fp(l * r),
+            _   => panic!("AddOperation: Invalid types!")
+        }
+    }
+}
+
+struct DivOperation {
+    left:  Box<dyn Expression>,
+    right: Box<dyn Expression>,
+}
+
+impl Expression for DivOperation {
+    fn evaluate(&self, reg: &Registry) -> Object {
+        let left_obj  = (*self.left).evaluate(reg);
+        let right_obj = (*self.right).evaluate(reg);
+
+        match (left_obj, right_obj) {
+            (Object::Int(l), Object::Int(r)) 
+                => Object::Int(l / r),
+            (Object::Fp(l), Object::Fp(r))
+                => Object::Fp(l / r),
+            _   => panic!("AddOperation: Invalid types!")
+        }
+    }
+}
+
 
 // Program
 
@@ -392,7 +453,6 @@ impl Program {
 
     fn execute(&mut self, arg: Object) -> Object {
         self.reg.insert(String::from("arg"), Rc::new(arg));
-        // TODO: set arg
         let mut curr = self.root.clone();
         while let Some(ptr) = curr {
             curr = (*ptr).borrow().execute(&mut self.reg);
@@ -419,14 +479,14 @@ fn parse_value(value: String) -> Object {
     }
 }
 
-fn get_prefix_precedence(op: Symbol) -> u8 {
+fn get_prefix_precedence(op: Symbol) -> i8 {
     match op {
         Symbol::Add | Symbol::Dash => 17,
         _ => panic!("PrefixOperationPrecedence: Invalid Symbol!"),
     }
 }
 
-fn get_infix_precedence(op: Symbol) -> (u8, u8) {
+fn get_infix_precedence(op: Symbol) -> (i8, i8) {
     match op {
         Symbol::Equal        => (7,  8),
         Symbol::Greater      => (9,  10),
@@ -439,6 +499,8 @@ fn get_infix_precedence(op: Symbol) -> (u8, u8) {
         Symbol::Slash        => (13, 14),
         // Symbol::Precentage => (13, 14),
         // Symbol::Power => (15, 16),
+
+        Symbol::RParen       => (-1, 0),
         _ => panic!("InfixOperationPrecedence: Invalid Symbol!"),
     }
 }
@@ -448,7 +510,6 @@ struct ExpressionParser<'a> {
     index: usize,
 }
 
-// TODO: PARENTHESIS
 impl<'a> ExpressionParser<'a> {
     fn new(_tokens: &'a [Token]) -> Self {
         ExpressionParser { index: 0, tokens: _tokens }
@@ -459,7 +520,7 @@ impl<'a> ExpressionParser<'a> {
         self.parse_expression_recursive(0)
     }
 
-    fn parse_expression_recursive(&mut self, min_precedence: u8) -> Box<dyn Expression> {
+    fn parse_expression_recursive(&mut self, min_precedence: i8) -> Box<dyn Expression> {
         
         let mut root: Box<dyn Expression> = Box::new(LiteralExpression{ literal: Object::Void });
         let mut fresh: bool =  true;
@@ -479,8 +540,16 @@ impl<'a> ExpressionParser<'a> {
                     }
 
                     match symbol {
-                        Symbol::Add => {
+                        Symbol::LParen => {
                             if fresh {
+                                root = self.parse_expression_recursive(0);
+                            } else {
+                                panic!{"ExpressionParser: Left Parenthesis is not an infix operator!"}
+                            }
+                        }
+
+                        Symbol::Add => {
+                            if fresh { // Prefix
                                 root = self.parse_expression_recursive(get_prefix_precedence(Symbol::Add));
                             } else {
                                 root = Box::new(AddOperation{ left: root, right: self.parse_expression_recursive(get_infix_precedence(Symbol::Add).1) });
@@ -488,40 +557,39 @@ impl<'a> ExpressionParser<'a> {
                         },
 
                         Symbol::Dash => {
-                            if fresh {
+                            if fresh { // Prefix
                                 root = Box::new(NegateOperation{ expr: self.parse_expression_recursive(get_prefix_precedence(Symbol::Dash)) });
                             } else {
-                                todo!();
+                                root = Box::new(AddOperation { left: root, right: Box::new(NegateOperation{ expr: self.parse_expression_recursive(get_infix_precedence(Symbol::Dash).1)}) });
                             }
                         },
 
                         Symbol::Asterisk => {
-                            todo!();
+                            root = Box::new(MulOperation{ left: root, right: self.parse_expression_recursive(get_infix_precedence(Symbol::Asterisk).1) });
                         },
 
                         Symbol::Slash => {
-                            todo!();
+                            root = Box::new(DivOperation{ left: root, right: self.parse_expression_recursive(get_infix_precedence(Symbol::Slash).1) });
                         },
 
                         Symbol::Equal => {
-                            todo!();
+                            root = Box::new(EqualOperation{ right: root, left: self.parse_expression_recursive(get_infix_precedence(Symbol::Equal).1) })
                         },
 
                         Symbol::Greater => {
-                            let precedence = get_infix_precedence(Symbol::Greater).1;
-                            root = Box::new(GreaterOperation{ left: root, right: self.parse_expression_recursive(precedence) })
+                            root = Box::new(LesserOperation{ right: root, left: self.parse_expression_recursive(get_infix_precedence(Symbol::Greater).1) })
                         },
 
                         Symbol::Lesser => {
-                            todo!();
+                            root = Box::new(LesserOperation{ left: root, right: self.parse_expression_recursive(get_infix_precedence(Symbol::Lesser).1) })
                         },
 
                         Symbol::GreaterEqual => {
-                            todo!();
+                            root = Box::new(GreaterEqualOperation{ left: root, right: self.parse_expression_recursive(get_infix_precedence(Symbol::GreaterEqual).1) })
                         },
 
                         Symbol::LesserEqual => {
-                            todo!();
+                            root = Box::new(GreaterEqualOperation{ right: root, left: self.parse_expression_recursive(get_infix_precedence(Symbol::LesserEqual).1) })
                         },
 
                         _ => panic!("ExpressionParser: Invalid Symbol!"),
@@ -556,9 +624,8 @@ impl<'a> ExpressionParser<'a> {
 // Parser
 
 struct Parser {
-    goto_list:  Vec<(String, Weak<GotoStatement>)>,
-    entry_list: HashMap<String, Weak<EntryStatement>>,
-    // expr_parser: ExpressionParser,
+    goto_list:  Vec<(String, Rc<RefCell<GotoStatement>>)>,
+    entry_list: HashMap<String, Rc<RefCell<EntryStatement>>>,
 }
 
 impl Parser {
@@ -566,7 +633,6 @@ impl Parser {
         Parser {
             goto_list:   Vec::new(),
             entry_list:  HashMap::new(),
-            // expr_parser: ExpressionParser::new(),
         }
     }
 
@@ -574,7 +640,6 @@ impl Parser {
         let prgm: Program = Program::new();
         let mut curr = prgm.root.clone().unwrap();
 
-        // TODO: Parse everything
         let mut now: usize = 0;
 
         while now < tokens.len() {
@@ -600,12 +665,10 @@ impl Parser {
                     let expr = expr_parser.parse_expression();
                     now += 1;
 
-                    (*curr).borrow_mut().set_next(
-                        Some(Rc::new(RefCell::new(LetStatement { identifier: ident, expression: expr, next: None })))
-                    );
+                    let new = Rc::new(RefCell::new(LetStatement { identifier: ident, expression: expr, next: None }));
+                    (*curr).borrow_mut().set_next(Some(new.clone()));
 
-                    let temp = (*curr).borrow().get_next().unwrap();
-                    curr = temp;
+                    curr = new;
                 },
 
                 Token::Keyword(Keyword::Ret) => {
@@ -619,46 +682,97 @@ impl Parser {
                     let expr = expr_parser.parse_expression();
                     now += 1;
 
-                    (*curr).borrow_mut().set_next(
-                        Some(Rc::new(RefCell::new(LetStatement { identifier: String::from("ret"), expression: expr, next: None })))
-                    );
+                    let new = Rc::new(RefCell::new(LetStatement { identifier: String::from("ret"), expression: expr, next: None }));
+                    (*curr).borrow_mut().set_next(Some(new.clone()));
 
-                    let temp = (*curr).borrow().get_next().unwrap();
-                    curr = temp;
+                    curr = new;
                 },
 
                 Token::Keyword(Keyword::Goto) => {
-                    todo!();
+                    let entry: String;
+
+                    now += 1;
+                    if let Token::Identifier(_entry) = &tokens[now] { entry = _entry.clone(); }
+                    else { panic!("Parser: Second Token of Goto Statement is not an identifier!") }
+
+                    now += 1;
+                    if let Token::Symbol(Symbol::Semicolon) = &tokens[now] { }
+                    else { panic!("Parser: Third Token of Goto Statement is not Semicolon!") }
+
+                    let new = Rc::new(RefCell::new(GotoStatement { condition: Box::new(LiteralExpression { literal: Object::Bool(true) }), jump: None, next: None}));
+                    self.goto_list.push((entry, new.clone()));
+
+                    (*curr).borrow_mut().set_next(Some(new.clone()));
+
+                    curr = new;
+
+                    now += 1;
                 },
 
                 Token::Keyword(Keyword::If) => {
-                    todo!();
+                    let pre = now + 1;
+                    loop {
+                        now += 1;
+                        if let Token::Keyword(Keyword::Goto) = tokens[now] { break; }
+                    }
+
+                    let mut expr_parser = ExpressionParser::new(&tokens[pre..now]);
+                    let expr = expr_parser.parse_expression();
+
+                    now += 1;
+                    let entry: String;
+                    if let Token::Identifier(_entry) = &tokens[now] { entry = _entry.clone(); }
+                    else { panic!("Parser: In IfGoto Statement, the Token after Goto is not an identifier!") }
+
+                    now += 1;
+                    if let Token::Symbol(Symbol::Semicolon) = &tokens[now] { }
+                    else { panic!("Parser: IfGoto Statement not ended correctly.") }
+
+                    let new = Rc::new(RefCell::new(GotoStatement { condition: expr, jump: None, next: None}));
+                    self.goto_list.push((entry, new.clone()));
+
+                    (*curr).borrow_mut().set_next(Some(new.clone()));
+
+                    curr = new;
+
+                    now += 1;
                 },
 
                 Token::Keyword(Keyword::Entry) => {
-                    todo!();
+                    let entry: String;
+
+                    now += 1;
+                    if let Token::Identifier(_entry) = &tokens[now] { entry = _entry.clone(); }
+                    else { panic!("Parser: Second Token of Entry Statement is not an identifier!") }
+
+                    now += 1;
+                    if let Token::Symbol(Symbol::Semicolon) = &tokens[now] { }
+                    else { panic!("Parser: Third Token of Entry Statement is not Semicolon!") }
+
+                    let new = Rc::new(RefCell::new(EntryStatement { next: None }));
+                    self.entry_list.insert(entry, new.clone());
+
+                    (*curr).borrow_mut().set_next(Some(new.clone()));
+
+                    curr = new;
+
+                    now += 1;
                 },
 
                 _ => panic!("Parser: Unknown Statement!"),
 
             }
-
-
-
-
         }
 
-
-
-        // self.solve_todo();
+        self.solve_goto();
+        
         return prgm;
     }
 
-    fn solve_todo(&mut self) {
-        
+    fn solve_goto(&mut self) {
 
         while let Some((name, stmt)) = self.goto_list.pop() {
-            // TODO: Solve Todo Relationship
+            (*stmt).borrow_mut().jump = Some(Rc::downgrade(self.entry_list.get(&name).expect("GotoSolver: Entry name not found!")).clone());
         }
 
         self.entry_list.clear();
@@ -671,14 +785,24 @@ impl Parser {
 
 
 fn main() {
+    let args: Vec<String> = env::args().collect();
+
+    if args.len() < 2 {
+        println!("Usage: nooblang [path to file]");
+        return;
+    }
+
+    let mut src = fs::read_to_string(args[1].clone()).unwrap();
+    src.push('\n');
+
     let lexer: Lexer = Lexer::new();
-    let tokens = lexer.lex(String::from("let x = 1 + 1;\nret x;\n"));
-    println!("{:?}", tokens);
+    let tokens = lexer.lex(src);
+    println!("-----Tokens-----\n{:?}\n---------------", tokens);
 
     let mut parser = Parser::new();
     let mut prgm = parser.parse(tokens);
 
     let res = prgm.execute(Object::Void);
 
-    println!("{:?}", res);
+    println!("Result: {:?}", res);
 }
